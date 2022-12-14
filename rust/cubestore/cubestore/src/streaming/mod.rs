@@ -1028,7 +1028,7 @@ mod tests {
                 }
             }
             Delay::new(Duration::from_millis(10000)).await;
-            scheduler.schedule_compaction_in_memory_chunks_if_needed(&meta_store.get_partition(middle_chunk.unwrap().get_row().get_partition_id()).await.unwrap()).await.unwrap();
+            scheduler.schedule_compaction_in_memory_chunks_if_needed(&meta_store.get_partition(middle_chunk.unwrap().get_row().get_partition_id()).await.unwrap(), false).await.unwrap();
 
             let wait = listener.wait_for_job_results(vec![
                 (RowKey::Table(TableId::Partitions, 1), JobType::InMemoryChunksCompaction),

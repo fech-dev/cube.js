@@ -393,15 +393,17 @@ impl SchedulerImpl {
     }
 
     async fn schedule_all_pending_compactions(&self) -> Result<(), CubeError> {
+        log::info!("schedule all pending compaction");
         let partition_compaction_candidates_id = self
             .meta_store
             // TODO config
             .get_partitions_with_chunks_created_seconds_ago(60)
             .await?;
         for p in partition_compaction_candidates_id {
-            self.schedule_compaction_in_memory_chunks_if_needed(&p)
+            log::info!("schedule pending partition candidate {}", p.get_id());
+            self.schedule_compaction_in_memory_chunks_if_needed(&p, true)
                 .await?;
-            self.schedule_compaction_if_needed(&p).await?;
+            self.schedule_compaction_if_needed(&p, true).await?;
         }
         Ok(())
     }
@@ -431,7 +433,7 @@ impl SchedulerImpl {
         // TODO we can do this reconciliation more rarely
         let all_inactive_chunks = self.meta_store.all_inactive_chunks().await?;
 
-        log::info!("send {} inactive chunks to GC", all_inactive_chunks.len());
+        log::trace!("send {} inactive chunks to GC", all_inactive_chunks.len());
         let (in_memory_inactive, persistent_inactive): (Vec<_>, Vec<_>) = all_inactive_chunks
             .iter()
             .partition(|c| c.get_row().in_memory());
@@ -778,7 +780,10 @@ impl SchedulerImpl {
                         let partition_to_move = partition.clone();
                         futures.push(cube_ext::spawn(async move {
                             self_to_move
-                                .schedule_compaction_in_memory_chunks_if_needed(&partition_to_move)
+                                .schedule_compaction_in_memory_chunks_if_needed(
+                                    &partition_to_move,
+                                    false,
+                                )
                                 .await
                         }));
                     }
@@ -786,7 +791,7 @@ impl SchedulerImpl {
                     let self_to_move = self.clone();
                     futures.push(cube_ext::spawn(async move {
                         self_to_move
-                            .schedule_compaction_if_needed(&partition_to_move)
+                            .schedule_compaction_if_needed(&partition_to_move, false)
                             .await
                     }));
                     /* features.push(async move {
@@ -856,8 +861,12 @@ impl SchedulerImpl {
     async fn schedule_compaction_if_needed(
         &self,
         partition: &IdRow<Partition>,
+        debug: bool,
     ) -> Result<(), CubeError> {
         let partition_id = partition.get_id();
+        if debug {
+            log::info!("try schedule compaction for {}", partition.get_id());
+        }
         let all_chunks = self
             .meta_store
             .get_chunks_by_partition_out_of_queue(partition_id, false)
@@ -883,6 +892,9 @@ impl SchedulerImpl {
             // Force compaction if other chunks were created far ago
             || min_created_at.map(|min| Utc::now().signed_duration_since(min).num_seconds() > self.config.compaction_chunks_max_lifetime_threshold() as i64).unwrap_or(false)
         {
+            if debug {
+                log::info!("scheduled compaction for {}", partition.get_id());
+            }
             self.schedule_partition_to_compact(partition).await?;
         }
         Ok(())
@@ -891,10 +903,17 @@ impl SchedulerImpl {
     pub async fn schedule_compaction_in_memory_chunks_if_needed(
         &self,
         partition: &IdRow<Partition>,
+        debug: bool,
     ) -> Result<(), CubeError> {
         let compaction_in_memory_chunks_count_threshold =
             self.config.compaction_in_memory_chunks_count_threshold();
 
+        if debug {
+            log::info!(
+                "try schedule in_memory compaction for {}",
+                partition.get_id()
+            );
+        }
         let partition_id = partition.get_id();
 
         let chunks = self
@@ -930,6 +949,9 @@ impl SchedulerImpl {
                     node.to_string(),
                 ))
                 .await?;
+            if debug {
+                log::info!(" schedule in_memory compaction for {}", partition.get_id());
+            }
             if job.is_some() {
                 self.cluster.notify_job_runner(node).await?;
             }
@@ -1233,7 +1255,7 @@ impl DataGCLoop {
                         }
                     }
                     GCTask::DeleteChunks(chunk_ids) => {
-                        log::info!("Delete chunks: {}", chunk_ids.len());
+                        log::trace!("Delete chunks: {}", chunk_ids.len());
                         match self.metastore.get_chunks_out_of_queue(chunk_ids).await {
                             Ok(chunks) => {
                                 let ids = chunks
@@ -1263,7 +1285,7 @@ impl DataGCLoop {
                                 );
                             }
                         }
-                        log::info!("Delete chunks completed");
+                        log::trace!("Delete chunks completed");
                     }
                     GCTask::DeleteMiddleManPartition(partition_id) => {
                         if let Ok(true) = self

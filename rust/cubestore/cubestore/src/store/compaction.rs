@@ -665,9 +665,11 @@ impl CompactionService for CompactionServiceImpl {
             .get_partition_for_compaction(partition_id)
             .await?;
 
+        log::info!("compact in memory chunks for {}", partition_id);
+
         // Test invariants
         if !partition.get_row().is_active() && !multi_part.is_some() {
-            log::trace!(
+            log::info!(
                 "Cannot compact inactive partition: {:?}",
                 partition.get_row()
             );
@@ -731,11 +733,11 @@ impl CompactionService for CompactionServiceImpl {
                         .unwrap_or(true)
             });
 
+        self.deactivate_and_mark_failed_chunks_for_replay(failed)
+            .await?;
         self.compact_chunks_to_memory(mem_chunks, &partition, &index, &table)
             .await?;
         self.compact_chunks_to_persistent(persistent_chunks, &partition, &index, &table)
-            .await?;
-        self.deactivate_and_mark_failed_chunks_for_replay(failed)
             .await?;
 
         Ok(())
