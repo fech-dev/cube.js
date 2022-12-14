@@ -306,8 +306,6 @@ impl CompactionServiceImpl {
         if failed.is_empty() {
             return Ok(());
         }
-        let flen = failed.len();
-        log::info!("deactivate and mark failed started {}", flen);
         let mut deactivate_failed_chunk_ids = Vec::new();
         for (failed_chunk, _) in failed {
             if let Some(handle_id) = failed_chunk.get_row().replay_handle_id() {
@@ -320,7 +318,6 @@ impl CompactionServiceImpl {
         self.meta_store
             .deactivate_chunks_without_check(deactivate_failed_chunk_ids)
             .await?;
-        log::info!("deactivate and mark failed completed {}", flen);
 
         Ok(())
     }
